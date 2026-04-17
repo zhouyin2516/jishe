@@ -1,0 +1,94 @@
+# 模型配置
+model:
+  # 基础模型路径（所有模型在同一目录下）
+  base_model_path: "model"
+  # 各模型子文件夹路径
+  unet_subfolder: "unets/4/unet"
+  text_encoder_subfolder: "text_encoder"
+  vae_subfolder: "vae"
+  scheduler_subfolder: "scheduler"
+  tokenizer_subfolder: "tokenizer"
+  # 输出目录
+  output_dir: "output/"
+  # 图像分辨率
+  resolution: 512
+  # 训练批次大小
+  train_batch_size: 8
+  # 训练轮数
+  num_train_epochs: 100
+  # 梯度累积步数
+  gradient_accumulation_steps: 1
+  # 是否使用梯度检查点
+  gradient_checkpointing: false
+  # 学习率
+  learning_rate: 0.0003
+  # 混合精度训练
+  mixed_precision: null
+  # 检查点保存步数
+  checkpointing_steps: 100
+
+# 服务器配置
+server:
+  # 服务器地址
+  server_addr: "localhost"
+  # 服务器端口
+  server_port: 5100
+  # 客户端数量
+  n_nodes: 4
+  # 动量值
+  momentum_value: 0.9
+  # 数据集根目录
+  dataset_root: "dataset_case4"
+  # 时间步范围配置
+  # 支持多个时间步范围，每个范围可以有不同的适配器配置
+  timestep_ranges:
+    # 范围1：高时间步（500-600）
+    - range: [500, 601]
+      # 适配器配置
+      adapter:
+        # 隐藏层层数
+        hidden_layers: 2
+        # 隐藏层大小（可以是单个值或列表）
+        hidden_size: [256, 128]
+        # 激活函数
+        activation: "gelu"
+
+# 客户端配置
+client:
+  # 数据集路径（客户端本地路径）
+  dataset_path: "dataset_case4"
+
+# 适配器配置
+adapter:
+  # 隐藏层层数
+  hidden_layers: 2
+  # 隐藏层大小（可以是单个值或列表，列表长度应与隐藏层层数相同）
+  # 示例1：所有隐藏层使用相同大小
+  # hidden_size: 128
+  # 示例2：不同隐藏层使用不同大小
+  hidden_size: [256, 128]
+  # 激活函数 (relu, gelu, sigmoid, tanh)
+  activation: "gelu"
+
+
+# 训练配置
+training:
+  # 是否使用自适应本地迭代
+  use_adapt_local: true
+  # 移动平均保持参数
+  moving_average_holding_param: 0.9
+  # 停止条件配置
+  stop_conditions:
+    # 时间上限（秒）
+    time_limit: null
+    # 能量上限（焦耳）
+    energy_limit: null
+    # 收敛轮数（连续多少轮最小损失未变化）
+    convergence_rounds: 20
+    # 损失改善百分比阈值（小于此值视为未改善）
+    loss_improvement_percentage: 1.0
+
+# 文本配置
+text:
+  # 训练文本
+  training_text: "COVID-19 chest CT: Compared with normal lung parenchyma, typical viral pneumonia features: bilateral multiple patchy opacities (ground-glass opacities with visible vessels, focal consolidation), subpleural distribution, ill-defined margins, no obvious lobulation, spiculation or large necrotic hypodense areas."

@@ -1,0 +1,3 @@
+python apply/gen.py --model_used="model" --pretrained_model="model" --prompt="
+COVID-19 chest CT: Compared with normal lung parenchyma, typical viral pneumonia features: bilateral multiple patchy opacities (ground-glass opacities with visible vessels, focal consolidation), subpleural distribution, ill-defined margins, no obvious lobulation, spiculation or large necrotic hypodense areas.
+" --device="cuda:0" --img_num=1 --output_dir="image_result" --iteration_case="case1" --momentum="with" --adapter_checkpoint_dir="output/dataset_case1_with_momentum"
