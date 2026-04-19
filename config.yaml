@@ -14,8 +14,7 @@ model:
   resolution: 512
   # 训练批次大小
   train_batch_size: 8
-  # 训练轮数
-  num_train_epochs: 100
+
   # 梯度累积步数
   gradient_accumulation_steps: 1
   # 是否使用梯度检查点
@@ -23,7 +22,7 @@ model:
   # 学习率
   learning_rate: 0.0003
   # 混合精度训练
-  mixed_precision: null
+  mixed_precision: "fp16"
   # 检查点保存步数
   checkpointing_steps: 100
 
@@ -79,6 +78,8 @@ training:
   moving_average_holding_param: 0.9
   # 停止条件配置
   stop_conditions:
+    # 训练轮数
+    num_train_epochs: null
     # 时间上限（秒）
     time_limit: null
     # 能量上限（焦耳）

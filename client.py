@@ -796,7 +796,7 @@ try:
                     timestep = timestep_scalar.repeat(batch_size)
 
                 # 生成初始文本嵌入
-                with torch.amp.autocast('cuda', enabled=True, dtype=torch.float32):
+                with torch.amp.autocast('cuda', enabled=True):
                     text_inputs = tokenizer(
                         [text] * batch_size,
                         padding="max_length",
@@ -810,7 +810,7 @@ try:
                 iter_start_time = time.time()
 
                 # 使用超网络生成所有层级的图像kappa
-                with torch.amp.autocast('cuda', enabled=True, dtype=torch.float32):
+                with torch.amp.autocast('cuda', enabled=True):
                     all_img_kappas = adapter["img_kappa_hypernet"](initial_text_emb, timestep)
                     adapted_text_emb = initial_text_emb  # 直接使用原始文本嵌入，不进行文本适配
 
