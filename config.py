@@ -56,7 +56,7 @@ case_range = config["training"].get("case_range", [0])   # 只使用一个case
 tau_setup_all = config["training"].get("tau_setup_all", [-1])   # 只使用自适应策略
 sim_runs = config["training"].get("sim_runs", [0])   # 只使用一个随机种子
 
-max_training_rounds = config["server"].get("max_training_rounds", 200)  # 设定最大训练轮数
+max_training_rounds = config["training"]["stop_conditions"].get("num_train_epochs", 200)  # 从停止条件中读取训练轮数
 
 # 动量设置（始终启用）
 momentum_value = config["server"].get("momentum_value", 0.9)  # 动量值
@@ -256,7 +256,7 @@ def parse_args():
     parser.add_argument(
         "--train_batch_size", type=int, default=config["model"].get("train_batch_size", 16), help="Batch size (per device) for the training dataloader."
     )
-    parser.add_argument("--num_train_epochs", type=int, default=config["model"].get("num_train_epochs", 100))
+    parser.add_argument("--num_train_epochs", type=int, default=config["training"]["stop_conditions"].get("num_train_epochs", 100))
     parser.add_argument(
         "--gradient_accumulation_steps",
         type=int,
@@ -278,7 +278,7 @@ def parse_args():
     parser.add_argument(
         "--mixed_precision",
         type=str,
-        default=config["model"].get("mixed_precision", None),
+        default=config["model"].get("mixed_precision", "fp16"),
         choices=["no", "fp16", "bf16"],
         help="Whether to use mixed precision. Choose between fp16 and bf16 (bfloat16). Bf16 requires PyTorch >= 1.10.and an Nvidia Ampere GPU. Default to the value of accelerate config of the current system or the flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config.",
     )
@@ -377,6 +377,7 @@ timestep_range = tuple(timestep_ranges[0]["range"]) if timestep_ranges else (500
 args = parse_args()
 args.num_processes=1
 args.mixed_precision=config["model"]["mixed_precision"]
+
 args.use_ema = True
 args.resolution=config["model"]["resolution"]
 args.center_crop = True
