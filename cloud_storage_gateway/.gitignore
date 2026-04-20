@@ -1,0 +1,17 @@
+# 环境隔离
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+
+# 安全底线（绝对不能提交真实的秘钥到 Github ！）
+.env
+*.pem
+*.key
+
+# 工程垃圾
+app.log
+scratch*.py
+.pytest_cache/
+.DS_Store
