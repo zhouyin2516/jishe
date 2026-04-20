@@ -14,6 +14,7 @@
   - [统计模块](#统计模块)
   - [工具模块](#工具模块)
   - [推理生成模块](#推理生成模块)
+  - [云存储网关模块](#云存储网关模块) ⭐️ 新增
 - [超参数详解](#超参数详解)
 - [数据流与通信协议](#数据流与通信协议)
 - [使用指南](#使用指南)
@@ -32,6 +33,7 @@
 3. **医学图像适配器**：针对医学图像特征设计的轻量级适配器模块
 4. **动量加速优化**：采用Heavy Ball动量梯度下降加速收敛
 5. **能耗与时间优化**：考虑通信能耗和计算时间的资源优化
+6. **⭐️ 云存储网关**：基于华为云OBS的高性能模型存储网关，支持预签名URL直传，实现零密钥泄露风险的安全存储方案（[详细文档](./cloud_storage_gateway/README.md)）
 
 ---
 
@@ -42,6 +44,15 @@
 │                              联邦学习系统架构                                  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    云存储网关 (Cloud Storage Gateway) ⭐️             │   │
+│  │  ┌───────────────┐  ┌───────────────┐  ┌───────────────────────┐   │   │
+│  │  │ 预签名URL服务  │  │ OBS文件管理    │  │   IAM鉴权服务         │   │   │
+│  │  │ (Pre-signed)  │  │ (OBS Service) │  │  (IAM Service)        │   │   │
+│  │  └───────────────┘  └───────────────┘  └───────────────────────┘   │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                              │                                             │
+│                              ▼ REST API                                    │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │                          服务器端 (server.py)                         │   │
 │  │  ┌───────────────┐  ┌───────────────┐  ┌───────────────────────┐   │   │
@@ -70,6 +81,11 @@
 │  │ │本地数据集  │ │  │ │本地数据集  │ │  │ │本地数据集  │ │                   │
 │  │ └───────────┘ │  │ └───────────┘ │  │ └───────────┘ │                   │
 │  └───────────────┘  └───────────────┘  └───────────────┘                   │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                      华为云OBS对象存储                                │   │
+│  │            (模型文件的持久化存储与分发)                                 │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -123,6 +139,31 @@ jishe/
 ├── start_training.py            # 训练启动脚本
 ├── prompt.txt                   # 训练文本提示
 ├── requirements.txt             # 依赖包列表
+│
+├── cloud_storage_gateway/       # ⭐️ 云存储网关微服务（新增）
+│   ├── README.md                # 网关详细文档
+│   ├── main.py                  # FastAPI应用入口
+│   ├── config.py                # 网关配置（OBS/IAM参数）
+│   ├── schemas.py               # API数据模型定义
+│   ├── dependencies.py          # 依赖注入（Token验证）
+│   ├── requirements.txt         # 网关依赖包
+│   │
+│   ├── routers/                 # API路由层
+│   │   └── internal_storage.py  # 内部存储API路由
+│   │
+│   ├── services/                # 业务逻辑层
+│   │   ├── obs_service.py       # OBS对象存储服务
+│   │   └── iam_service.py       # IAM鉴权服务（ECS委托）
+│   │
+│   ├── test/                    # 测试套件
+│   │   ├── test_api.py          # API接口测试
+│   │   └── test_concurrency_stress.py  # 并发压力测试
+│   │
+│   └── deployment_guide/        # 📖 部署指南文档
+│       ├── 01_云服务器与安全组配置.md
+│       ├── 02_ECS委托免密机制(核心).md
+│       ├── 03_全自动化部署指南.md
+│       └── 04_API全链路单步测试演练.md
 │
 ├── control_algorithm/           # 控制算法模块
 │   ├── __init__.py
@@ -1177,6 +1218,162 @@ def main():
 
 ---
 
+### 9. 云存储网关模块 ⭐️ 新增
+
+> 📖 **详细文档**：[cloud_storage_gateway/README.md](./cloud_storage_gateway/README.md)
+
+#### 模块简介
+
+**云存储网关（Cloud Storage Gateway）**是专为联邦学习系统设计的云端存储内部网关，作为一个独立的高性能微服务运行。其核心职责是将客户端的高负载、大文件（如深度学习大模型，动辄GB级）的上传与下载动作从业务线中解耦。
+
+#### 核心架构：Pre-signed URL (预签名直通)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    传统模式 vs 预签名直通模式                  │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ❌ 传统模式（性能瓶颈）：                                     │
+│  客户端 → 业务服务器(中转) → 云存储OBS                        │
+│  问题：服务器带宽压力巨大，GB级文件传输耗时                     │
+│                                                             │
+│  ✅ 预签名直通模式（本网关方案）：                              │
+│  客户端 ← 预签名URL ← 本网关微服务                            │
+│  客户端 ──────────────────→ 华为云OBS（直连）                 │
+│  优势：零中转，利用云厂商大带宽管道，极速传输                   │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 核心功能特性
+
+| 功能 | 说明 | 技术实现 |
+|------|------|----------|
+| **预签名URL动态颁发** | 为每个联邦学习组别和文件下发精准的预签名直连 | OBS SDK `createSignedUrl` API |
+| **免密/委托机制适配** | 基于华为云ECS委托鉴权，零长期密钥泄露风险 | ECS Metadata Service (169.254.169.254) |
+| **私有API认证隔离** | 所有请求必须持有正确的Internal Token | FastAPI Depends中间件验证 |
+| **OBS目录规范化** | Bucket对象严格前缀隔离 | `{group_id}/models/{file_key}` |
+
+#### 安全设计亮点
+
+1. **零密钥泄露风险**：
+   - 生产环境使用ECS Agency（委托）鉴权模型
+   - 自动调用云内网元数据授权（169.254.169.254）
+   - 无需保存静态AK/SK到配置文件
+
+2. **细粒度权限控制**：
+   - 预签名URL时效性限制：**1小时**（支持断点续传）
+   - 操作范围限制：仅允许指定的group_id和file_key
+   - IAM Policy精确限定：`obs:object:PutObject` 或 `obs:object:GetObject`
+
+3. **网络隔离策略**：
+   - 网关端口**禁止对公网开放**
+   - 仅对后端业务系统IP白名单开放
+   - 客户端通过预签名URL直连OBS，无法直接访问网关
+
+#### 技术栈
+
+| 组件 | 技术 | 版本要求 |
+|------|------|----------|
+| **语言框架** | Python / FastAPI / Uvicorn | Python 3.10+ |
+| **数据验证** | pydantic / pydantic-settings | 最新版 |
+| **华为云SDK** | esdk-obs-python | 最新版 |
+| **IAM服务** | huaweicloudsdkiam | 最新版 |
+
+#### 目录结构
+
+```
+cloud_storage_gateway/
+├── main.py                      # FastAPI应用入口
+├── config.py                    # 配置管理（OBS/IAM/认证模式）
+├── schemas.py                   # Pydantic数据模型
+├── dependencies.py              # 依赖注入（Token验证中间件）
+├── requirements.txt             # Python依赖
+│
+├── routers/                     # API路由层
+│   └── internal_storage.py      # 5个RESTful API端点
+│
+├── services/                    # 业务逻辑层
+│   ├── obs_service.py           # OBS操作封装（上传/下载/删除/列表）
+│   └── iam_service.py          # IAM鉴权（ECS委托/本地开发）
+│
+├── test/                        # 测试套件
+│   ├── test_api.py              # 单元测试
+│   └── test_concurrency_stress.py  # 并发压力测试
+│
+└── deployment_guide/            # 📖 完整部署指南
+    ├── 01_云服务器与安全组配置.md
+    ├── 02_ECS委托免密机制(核心).md
+    ├── 03_全自动化部署指南.md
+    ├── 04_API全链路单步测试演练.md
+    └── auto_deploy_template.py  # 一键部署脚本
+```
+
+#### RESTful API接口
+
+| Endpoint | 方法 | 功能 | 认证要求 |
+|----------|------|------|----------|
+| `/api/internal/storage/generate_presigned_url` | POST | 申请预签名URL（核心API） | X-Internal-Token |
+| `/api/internal/storage/delete_object` | POST | 删除远端文件 | X-Internal-Token |
+| `/api/internal/storage/object_meta` | GET | 获取文件元数据 | X-Internal-Token |
+| `/api/internal/storage/list_groups` | GET | 获取租户列表 | X-Internal-Token |
+| `/api/internal/storage/list_models` | GET | 获取分组下的模型文件 | X-Internal-Token |
+
+> 💡 **典型使用场景**：
+> 1. 联邦训练完成后，服务器调用网关获取预签名URL
+> 2. 将URL下发给客户端，客户端直接上传模型到OBS
+> 3. 其他客户端可通过下载URL快速拉取最新模型
+> 4. 全程无需经过业务服务器中转，极大提升传输效率
+
+#### 配置说明
+
+**环境变量配置（`.env`文件）**：
+
+```env
+# 必填项
+INTERNAL_API_KEY=your-internal-secret-token    # 内部API密钥
+OBS_BUCKET=medical-model-data                  # OBS桶名
+OBS_ENDPOINT=obs.cn-north-4.myhuaweicloud.com  # OBS终端节点
+IAM_REGION=cn-north-4                          # IAM区域
+
+# 可选项（生产环境建议启用）
+USE_ECS_AGENCY=True                            # 是否使用ECS委托（推荐）
+
+# 开发环境专用（USE_ECS_AGENCY=False时必填）
+DEV_AK=your-dev-access-key
+DEV_SK=your-dev-secret-key
+```
+
+#### 快速启动
+
+```bash
+# 1. 进入网关目录
+cd cloud_storage_gateway
+
+# 2. 安装依赖
+pip install -r requirements.txt
+
+# 3. 配置环境变量
+cp .env.sample .env
+# 编辑 .env 填入实际配置
+
+# 4. 启动服务
+python main.py
+# 服务运行在 http://localhost:8000
+```
+
+#### 完整部署指南
+
+📖 详细的生产环境部署文档请参考：[deployment_guide/目录](./cloud_storage_gateway/deployment_guide/)
+
+包含以下完整教程：
+1. **云服务器与安全组配置** - 网络安全基线设置
+2. **ECS委托免密机制（核心）** - 零密钥鉴权原理与配置
+3. **全自动化部署指南** - 一键脚本傻瓜化部署
+4. **API全链路单步测试演练** - 从零开始的接口调试教程
+
+---
+
 ## 超参数详解
 
 ### 模型超参数
@@ -1283,6 +1480,55 @@ def main():
   │                                         │
 ```
 
+### ⭐️ 云存储网关数据流（新增）
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                  模型存储与分发流程                          │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  训练完成后的模型持久化流程：                                  │
+│                                                             │
+│  1. 服务器调用云存储网关API                                   │
+│     POST /api/internal/storage/generate_presigned_url        │
+│     { "group_id": "federated_group_1",                      │
+│       "file_key": "unet_epoch_10.zip",                      │
+│       "action": "upload" }                                  │
+│                         │                                   │
+│                         ▼                                   │
+│  2. 网关返回预签名URL                                        │
+│     { "url": "https://obs...?Signature=..." }               │
+│                         │                                   │
+│                         ▼                                   │
+│  3. 服务器将URL下发给客户端                                    │
+│     Socket: MSG_MODEL_UPLOAD_URL                            │
+│                         │                                   │
+│                         ▼                                   │
+│  4. 客户端直连华为云OBS上传模型                               │
+│     HTTP PUT → OBS (无需经过业务服务器)                       │
+│                                                             │
+│  其他客户端拉取模型流程：                                      │
+│                                                             │
+│  5. 客户端请求下载URL                                       │
+│     → 服务器 → 网关 → 返回下载预签名URL                       │
+│                         │                                   │
+│                         ▼                                   │
+│  6. 客户端直连OBS下载模型                                    │
+│     HTTP GET ← OBS (极速下载)                                │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**优势对比**：
+
+| 指标 | 传统中转模式 | 预签名直通模式（本网关） |
+|------|-------------|------------------------|
+| **传输路径** | 客户端→服务器→OBS | 客户端↔OBS（直连） |
+| **服务器带宽压力** | 高（需中转GB级文件） | **零**（仅传递URL） |
+| **传输速度** | 受限于服务器带宽 | **云厂商大带宽管道** |
+| **安全性** | 依赖服务器防护 | **细粒度权限+时效限制** |
+| **扩展性** | 服务器成为瓶颈 | **水平无限扩展** |
+
 ---
 
 ## 使用指南
@@ -1290,8 +1536,11 @@ def main():
 ### 环境准备
 
 ```bash
-# 安装依赖
+# 安装主项目依赖
 pip install -r requirements.txt
+
+# 安装云存储网关依赖（可选）
+cd cloud_storage_gateway && pip install -r requirements.txt && cd ..
 ```
 
 ### 数据准备
@@ -1325,6 +1574,59 @@ python server.py
 # 终端2-5：启动客户端
 python client.py
 ```
+
+### ⭐️ 启动云存储网关（新增）
+
+> 📖 **完整部署指南**：[cloud_storage_gateway/deployment_guide/](./cloud_storage_gateway/deployment_guide/)
+
+#### 开发环境快速启动
+
+```bash
+# 1. 进入网关目录
+cd cloud_storage_gateway
+
+# 2. 配置环境变量
+cp .env.sample .env
+# 编辑 .env 文件，填入以下配置：
+#    - INTERNAL_API_KEY: 内部API密钥（自定义）
+#    - OBS_BUCKET: OBS桶名
+#    - OBS_ENDPOINT: OBS终端节点
+#    - IAM_REGION: IAM区域（如 cn-north-4）
+#    - USE_ECS_AGENCY: False（本地开发）
+#    - DEV_AK / DEV_SK: 本地开发凭据
+
+# 3. 安装依赖
+pip install -r requirements.txt
+
+# 4. 启动服务
+python main.py
+# 服务运行在 http://localhost:8000
+
+# 5. 健康检查
+curl http://localhost:8000/health
+# 返回: {"status": "ok"}
+```
+
+#### 生产环境部署（推荐）
+
+生产环境建议使用 **ECS委托免密模式**，实现零密钥泄露风险：
+
+```bash
+# 详细步骤请参考 deployment_guide/ 目录下的文档：
+# 01_云服务器与安全组配置.md      - 网络安全配置
+# 02_ECS委托免密机制(核心).md     - 鉴权原理与配置
+# 03_全自动化部署指南.md          - 一键部署脚本
+# 04_API全链路单步测试演练.md      - 接口调试教程
+```
+
+**关键配置差异**：
+
+| 配置项 | 开发环境 | 生产环境 |
+|--------|----------|----------|
+| `USE_ECS_AGENCY` | `False` | **`True`（推荐）** |
+| `DEV_AK/SK` | 必填 | 不需要 |
+| 安全组 | localhost访问 | 仅业务服务器IP白名单 |
+| 密钥管理 | 明文存储在.env | **零明文密钥** |
 
 ### 生成图像
 
@@ -1371,6 +1673,21 @@ python apply/gen.py \
 |------|----------|------|
 | matplotlib | >=3.5.0 | 可视化 |
 | wandb | >=0.13.0 | 实验追踪 |
+
+### ⭐️ 云存储网关依赖（新增）
+
+> 📌 **完整依赖列表**：[cloud_storage_gateway/requirements.txt](./cloud_storage_gateway/requirements.txt)
+
+| 包名 | 版本要求 | 用途 |
+|------|----------|------|
+| fastapi | >=0.100.0 | Web框架 |
+| uvicorn | >=0.23.0 | ASGI服务器 |
+| pydantic | >=2.0.0 | 数据验证 |
+| pydantic-settings | >=2.0.0 | 配置管理 |
+| esdk-obs-python | 最新版 | 华为云OBS SDK |
+| huaweicloudsdkiam | 最新版 | 华为云IAM SDK |
+| requests | >=2.31.0 | HTTP客户端（ECS元数据） |
+| python-multipart | >=0.0.6 | 文件上传支持 |
 
 ---
 
