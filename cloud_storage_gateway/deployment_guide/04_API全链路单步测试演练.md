@@ -10,6 +10,12 @@
 >     - **这是什么？**：这是为了防止公网恶意访问，我们设立的一道关卡。任何请求如果不在 Header 头里挂上这行字和相应的密码，直接无视并报 `403 Forbidden`。
 >     - **怎么填？该填什么？**：它对应你服务器代码目录下的 `.env` 文件（或者是你在 `auto_deploy_template.py` 中下发的那个变量）里明文规定的 **`INTERNAL_API_KEY`** 这个参数的值。
 >     - **本次测试的默认值**：由于我们用了一键脚本部署，该脚本默认把 `INTERNAL_API_KEY` 写成了 **`test_secret_key`**，所以在下面的命令中，你会看到通篇全部在使用 `-H "X-Internal-Token: test_secret_key"` 进行通关。在未来的真实生产中，当后端 Java 找你要的时候，如果 `.env` 里的 `INTERNAL_API_KEY=ABC12345`，你就要把下面测试里所有的 `test_secret_key` 换成 `ABC12345`。
+> 
+> [!CAUTION]
+> **常见报错处理 (403 Forbidden)**：
+> 如果你在测试时遇到 `{"detail":"Forbidden: Invalid or missing X-Internal-Token"}`，说明 Header 中的 Token 和服务器配置的不一致。
+> 请立即检查 `auto_deploy_template.py` 中的 `INTERNAL_API_KEY` 变量，并确保重新执行了部署脚本以让配置生效。
+
 
 ---
 

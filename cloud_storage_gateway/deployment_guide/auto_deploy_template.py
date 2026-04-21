@@ -16,12 +16,30 @@ LOCAL_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # 核心的远端生产环境变量注入
 PRODUCTION_ENV_CONFIG = """
-INTERNAL_API_KEY=your_production_secret_key
+INTERNAL_API_KEY=test_secret_key
 OBS_BUCKET=medical-model-data
 OBS_ENDPOINT=obs.cn-southwest-2.myhuaweicloud.com
 IAM_REGION=cn-southwest-2
 USE_ECS_AGENCY=True
 """
+
+
+# Systemd 守护进程模板 (支持服务器重启自启动)
+SYSTEMD_SERVICE_TEMPLATE = """
+[Unit]
+Description=Cloud Storage Gateway for Federated Learning
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory={remote_path}
+ExecStart={remote_path}/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+"""
+
 
 def deploy():
     client = paramiko.SSHClient()
@@ -67,17 +85,46 @@ def deploy():
     if err := stderr.read().decode().strip():
         print(" [!] Pip 警告日志:", err)
 
-    # 5. Uvicorn 进程守护拉起
-    print("[*] 清洗历史残留进程, 重建 Systemd Uvicorn...")
+    # 5. Uvicorn 进程守护拉起 (改为持久化 Systemd 服务以支持开机自启)
+    print("[*] 清洗历史残留进程, 配置持久化 Systemd 守护进程...")
     client.exec_command("fuser -k 8000/tcp")
     client.exec_command("systemctl stop cloudgateway.service")
+    # 强制清理掉可能存在的同名瞬态 Unit (防止 'transient or generated' 冲突)
+    client.exec_command("rm -f /run/systemd/system/cloudgateway.service /run/systemd/transient/cloudgateway.service*")
     time.sleep(2)
     
-    # 使用瞬态 systemd 使得 FastAPI 以最高稳定性脱离 SSH Session 的挂断生命周期保持长活
-    bootstrap_cmd = f"systemd-run --unit=cloudgateway.service --remain-after-exit /bin/bash -c 'cd {REMOTE_PATH} && ./venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000'"
-    client.exec_command(bootstrap_cmd)
+    # 写入 Service 配置文件 (改用本地生成 + SCP 物理上传以确保数据持久化完整性)
+    service_content = SYSTEMD_SERVICE_TEMPLATE.format(remote_path=REMOTE_PATH)
+    local_tmp_path = os.path.join(LOCAL_PATH, "cloudgateway.service.tmp")
+    with open(local_tmp_path, "w", encoding="utf-8") as f:
+        f.write(service_content)
     
-    print("[*] 自动部署流程全绿完成！网关系统已上云并上线服务。")
+    with SCPClient(client.get_transport()) as scp:
+        print("[*] 正在 SCP 服务配置文件到远程暂存区...")
+        scp.put(local_tmp_path, remote_path="/tmp/cloudgateway.service")
+    
+    if os.path.exists(local_tmp_path):
+        os.remove(local_tmp_path) 
+
+    # 负载并启动
+    print("[*] 激活并启动开机自启动服务 (systemctl enable & restart)...")
+    full_setup_cmd = (
+        "mv /tmp/cloudgateway.service /etc/systemd/system/cloudgateway.service && "
+        "chmod 644 /etc/systemd/system/cloudgateway.service && "
+        "systemctl daemon-reload && "
+        "systemctl enable cloudgateway.service && "
+        "systemctl restart cloudgateway.service && "
+        "sync"
+    )
+    _, stdout, stderr = client.exec_command(full_setup_cmd)
+    if err := stderr.read().decode().strip():
+        # 忽略正常状态输出
+        if "Created symlink" not in err:
+            print(" [!] Systemd 配置提示:", err)
+    
+    print("[*] 自动部署流程全绿完成！网关系统已上云并开启开机自启。")
+
+
     client.close()
 
 if __name__ == '__main__':
