@@ -26,18 +26,34 @@ def get_server_credentials() -> Tuple[str, str, str | None]:
     
     # Fetch from ECS Metadata
     try:
-        url = "http://169.254.169.254/openstack/latest/securitykey"
-        # Usually returns JSON with {"credential": {"access": "...", "secret": "...", "securitytoken": "...", "expires_at": "..."}}
+        # 优先使用华为云标准 Managed Service 路径 (支持特定委托名称)
+        agency_name = "OBS-Medical-Gateway-Agency"
+        url = f"http://169.254.169.254/managed_service/security_token/{agency_name}"
+        
+        logger.info(f"Fetching credentials from metadata service: {url}")
         resp = requests.get(url, timeout=5)
+        
+        if resp.status_code != 200:
+            # 备选：尝试通用 OpenStack 路径 (旧版兼容)
+            logger.warning("Primary metadata endpoint failed, attempting legacy fallback...")
+            url = "http://169.254.169.254/openstack/latest/securitykey"
+            resp = requests.get(url, timeout=5)
+        
         resp.raise_for_status()
         data = resp.json()
-        credential = data.get("credential", {})
-        ak = credential.get("access")
-        sk = credential.get("secret")
-        token = credential.get("securitytoken")
+        
+        # 兼容不同响应格式 (Managed Service vs OpenStack Legacy)
+        credential = data.get("credential", {}) if "credential" in data else data
+        
+        ak = credential.get("access") or credential.get("access_key_id")
+        sk = credential.get("secret") or credential.get("secret_access_key")
+        token = credential.get("securitytoken") or credential.get("security_token")
+        
         if not ak or not sk:
-            raise ValueError("Failed to parse AK/SK from ECS Metadata.")
+            raise ValueError(f"Failed to parse AK/SK from Metadata response: {data}")
+            
         return ak, sk, token
+
     except Exception as e:
         logger.error(f"Failed to fetch ECS agency credentials: {e}")
         raise

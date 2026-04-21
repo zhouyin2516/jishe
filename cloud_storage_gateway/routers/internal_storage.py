@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 
 from schemas import (
-    PresignedUrlRequest, PresignedUrlResponse,
+    PresignedUrlRequest, PresignedUrlResponse, ActionEnum,
     BasicObjectRequest, ObjectMetaResponse,
     ListModelsResponse, ModelFileInfo
 )
+
 from dependencies import verify_internal_token
 from services import obs_service
 
@@ -27,9 +28,20 @@ async def generate_presigned_url(req: PresignedUrlRequest):
         url = obs_service.generate_presigned_url(
             action=req.action.value,
             group_id=req.group_id,
-            file_key=req.file_key
+            file_key=req.file_key,
+            content_type=req.content_type,
+            expires=req.expires
         )
-        return PresignedUrlResponse(url=url)
+
+
+        # 自动生成的 curl 示例，为了防止 Windows 终端换行截断，建议用户配合该命令使用
+        curl_cmd = None
+        if req.action == ActionEnum.upload:
+            # 基础上传命令
+            header_str = f' -H "Content-Type: {req.content_type}"' if req.content_type else ""
+            curl_cmd = f'curl -X PUT -T "YOUR_LOCAL_FILE_PATH"{header_str} "{url}"'
+            
+        return PresignedUrlResponse(url=url, curl_command=curl_cmd)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

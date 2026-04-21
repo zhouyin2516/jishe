@@ -32,9 +32,15 @@ tar -a -c -f test_model.zip test_model.txt
 ## 步骤 2：获取『上传』专属预签名 URL
 你必须要向咱们的后台独立系统“打报告申请”，才能获得跟华为云直接交流的能力。
 
-**使用终端 (cURL 单行版，兼容 CMD/PowerShell 复制执行)**
+**注意 (重要)**：对于图片等非 ZIP 文件，由于 `curl` 会自动添加 `Content-Type` 请求头，申请 URL 时**必须显式指定 `content_type`**，否则上传会报鉴权失败。
+
+**使用终端 (cURL 单行版)**
 ```bat
+# 场景 A: 上传大模型 ZIP (通常不需要传 content_type)
 curl -X POST "http://101.245.110.98:8000/api/internal/storage/generate_presigned_url" -H "X-Internal-Token: test_secret_key" -H "Content-Type: application/json" -d "{\"group_id\": \"federated_group_1\", \"file_key\": \"test_model.zip\", \"action\": \"upload\"}"
+
+# 场景 B: 上传图片 (必须带上 content_type: image/png)
+curl -X POST "http://101.245.110.98:8000/api/internal/storage/generate_presigned_url" -H "X-Internal-Token: test_secret_key" -H "Content-Type: application/json" -d "{\"group_id\": \"federated_group_1\", \"file_key\": \"test_pic.png\", \"action\": \"upload\", \"content_type\": \"image/png\"}"
 ```
 
 **Postman 操作对照法**
@@ -45,9 +51,12 @@ curl -X POST "http://101.245.110.98:8000/api/internal/storage/generate_presigned
 **预期的成功响应**:
 ```json
 {
-  "url": "https://medical-model-data.obs.cn-north-4.myhuaweicloud.com/federated_group_1/models/test_model.zip?AWSAccessKeyId=......"
+  "url": "https://medical-model-data.obs.cn-southwest-2.myhuaweicloud.com/federated_group_1/models/test_model.zip?...",
+  "curl_command": "curl -X PUT -T \"YOUR_LOCAL_FILE_PATH\" \"https://...\""
 }
 ```
+> **💡 小技巧**：你可以直接复制 `curl_command` 字段的内容到终端执行，这能有效避免手动复制极长 URL 时可能产生的换行符干扰。
+
 
 ---
 
@@ -56,11 +65,24 @@ curl -X POST "http://101.245.110.98:8000/api/internal/storage/generate_presigned
 
 **使用终端 (cURL)** (将下面 `<YOUR_OBS_SIGNED_URL>` 替换为刚拿到的极长字符串)
 ```powershell
-curl -X PUT -T "test_model.zip" "<YOUR_OBS_SIGNED_URL>"
+# 如果在步骤 2 申请的是 image/png 类型，上传时 curl 会自动添加该 Header 并匹配签名
+curl -X PUT -T "your_image.png" "<YOUR_OBS_SIGNED_URL>"
 ```
-*如果你使用 Postman*：新建一个页签，选择 `PUT`，框内填入 URL，Body 选择 `binary` 并选中你刚才电脑桌面的 `test_model.zip` 上传，点击 Send。
+*如果你使用 Postman*：新建一个页签，选择 `PUT`，框内填入 URL。**在 Headers 页签手动添加 `Content-Type`**（值必须与申请 URL 时填写的 `content_type` 完全一致），然后 Body 选择 `binary` 并选中文件，点击 Send。
 
 **预期反应**: 如果控制台不报错（华为通常返回空字符或 `HTTP 200 OK`），代表模型已经神不知鬼不觉上云了。
+
+---
+
+## 进阶：使用自动化测试工具 (推荐)
+如果你觉得 cURL 手动操作太繁琐或容易出错，可以使用项目中附带的自动化测试脚本：
+
+```bash
+cd deployment_guide
+# 自动走通：申请 URL -> 执行上传
+python upload_test.py --file "C:\path\to\your\model.zip" --group "federated_group_1"
+```
+
 
 ---
 

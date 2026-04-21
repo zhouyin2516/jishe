@@ -12,14 +12,19 @@ def get_obs_client() -> ObsClient:
     """
     ak, sk, token = get_server_credentials()
     # ESDK-OBS-Python supports security_token for temporary credentials (e.g. from ECS metadata)
+    # 为保证西南-贵阳 (cn-southwest-2) 等新区域兼容性，强制指定 signature='v4' 和正确的 region
     return ObsClient(
         access_key_id=ak,
         secret_access_key=sk,
         security_token=token,
-        server=settings.OBS_ENDPOINT
+        server=settings.OBS_ENDPOINT,
+        signature='v4',
+        region=settings.IAM_REGION
     )
 
-def generate_presigned_url(action: str, group_id: str, file_key: str) -> str:
+
+
+def generate_presigned_url(action: str, group_id: str, file_key: str, content_type: str | None = None, expires: int = 3600) -> str:
     """
     Generate a pre-signed URL for direct upload or download by the client.
     action: "upload" -> PUT, "download" -> GET
@@ -27,17 +32,22 @@ def generate_presigned_url(action: str, group_id: str, file_key: str) -> str:
     object_key = f"{group_id}/models/{file_key}"
     http_method = "PUT" if action == "upload" else "GET"
     
-    # 过期时间硬编码设置为 3600 秒 (1小时)，以保证巨型模型的长时间断点续传
-    expires = 3600
+    # 构造请求头，如果要上传图片等特定类型，必须在这里指定并在上传时匹配
+    headers = {}
+    if action == "upload" and content_type:
+        headers["Content-Type"] = content_type
     
     obsClient = get_obs_client()
+
     try:
         res = obsClient.createSignedUrl(
             method=http_method, 
             bucketName=settings.OBS_BUCKET, 
             objectKey=object_key, 
-            expires=expires
+            expires=expires,
+            headers=headers
         )
+
         if hasattr(res, "signedUrl") and res.signedUrl:
             logger.info(f"Generated {http_method} Pre-signed URL for {object_key}")
             return res.signedUrl

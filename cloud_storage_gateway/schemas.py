@@ -12,10 +12,16 @@ class PresignedUrlRequest(BaseModel):
     group_id: str
     file_key: str
     action: ActionEnum
+    content_type: str | None = None
+    expires: int = 3600
+
+
 
 
 class PresignedUrlResponse(BaseModel):
     url: str
+    curl_command: str | None = None
+
 
 
 class BasicObjectRequest(BaseModel):

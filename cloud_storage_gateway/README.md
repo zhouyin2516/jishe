@@ -16,10 +16,10 @@
 *   **私有 API 认证隔离**: 内置 Header 中间件，所有请求必须持有正确的 `X-Internal-Token`，杜绝公网直接恶意调用网关刷流量。
 *   **OBS 目录结构规范化**: 将所有的 Bucket 对象严格进行前缀隔离：`{group_id}/models/{file_key}`。
 
-## 技术栈
 - **语言框架**: Python 3.10+ / FastAPI / Uvicorn
-- **包管理**: pydantic, pydantic-settings
-- **华为云 SDK**: `esdk-obs-python`
+- **核心包**: pydantic, pydantic-settings, requests
+- **华为云核心 SDK**: `esdk-obs-python` (强制 V4 签名, 区域识别补丁)
+
 
 ---
 
@@ -40,17 +40,24 @@
     {
         "group_id": "federated_group_1",
         "file_key": "unet_epoch_10.zip",
-        "action": "upload"  // 或者 "download"
+        "action": "upload",
+        "content_type": "application/zip", // 可选
+        "expires": 3600 // 可选，单位秒。默认为 3600 (1小时)
     }
+
     ```
 *   **Response (JSON)**:
     ```json
     {
-        "url": "https://medical-model-data.obs.cn-north-4.myhuaweicloud.com/federated_group_1/models/unet_epoch_10.zip?AWSAccessKeyId=...&Expires=...&Signature=..."
+        "url": "https://...",
+        "curl_command": "curl -X PUT -T \"YOUR_LOCAL_FILE_PATH\" -H \"Content-Type: ...\" \"https://...\"" 
+        // 提示：这是自动生成的防错上传命令，直接复制执行即可，无需手动拼凑。
     }
     ```
-*   **客户端拿到后的下一步运作**: 
-    客户端（浏览器/PC端）将直接对该 `"url"` 发起 HTTP `PUT` (若申请为 upload) 或 `GET` (若申请为 download) 动作，把几 GB 的二进制大文件直接怼进去。
+*   **客户端操作指引**: 
+    客户端将直接对该 `"url"` 发起 HTTP `PUT` (upload) 或 `GET` (download)。
+    **注意**：如果申请时指定了 `content_type`，上传时的 HTTP Header 必须完全一致。
+
 
 ### 2. 远端物理文件删除
 如果在系统里废弃了某个模型，可跨越后台直删 OBS 源文件。
@@ -69,6 +76,8 @@
 
 ---
 
-## 运维及二次开发指南
+具体请参见本项目附带的全新教程目录 `deployment_guide/`。
 
-具体请参见本项目附带的全新教程目录 `deployment_guide/`，该目录提供了完全脱离繁琐的 Linux Bash 操作、且适用于任意 Ubuntu 标准服务的傻瓜化一键部署方案。
+**开发测试辅助工具：**
+在 `deployment_guide/upload_test.py` 目录下有一个自动化上传演示脚本。你可以使用该脚本一键测试全链路（申请URL -> 上传数据），该工具能有效规避终端复制粘贴时产生换行符导致的鉴权失败问题。
+
